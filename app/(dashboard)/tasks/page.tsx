@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, useCallback } from "react"
+import { useEffect, useState, useCallback, useMemo } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -13,6 +13,20 @@ import { formatDistanceToNow, isPast } from "date-fns"
 import { cn } from "@/lib/utils"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import type { Task, Profile } from "@/lib/types"
+import {
+  DndContext,
+  DragOverlay,
+  useSensor,
+  useSensors,
+  PointerSensor,
+  KeyboardSensor,
+  closestCorners,
+  type DragStartEvent,
+  type DragEndEvent,
+  type DragOverEvent,
+} from "@dnd-kit/core"
+import { sortableKeyboardCoordinates, rectSortingStrategy, SortableContext, useSortable } from "@dnd-kit/sortable"
+import { CSS } from "@dnd-kit/utilities"
 
 type TaskWithAssignee = Task & { assignee: Profile | null }
 
@@ -33,6 +47,9 @@ export default function TasksPage() {
   const [isLoading, setIsLoading] = useState(true)
   const [view, setView] = useState<"list" | "board">("board")
   const [userId, setUserId] = useState<string | null>(null)
+
+  // DnD State
+  const [activeId, setActiveId] = useState<string | null>(null)
 
   const fetchTasks = useCallback(async () => {
     const supabase = createClient()
@@ -80,9 +97,88 @@ export default function TasksPage() {
     }
   }
 
-  const todoTasks = tasks.filter((t) => t.status === "todo")
-  const doingTasks = tasks.filter((t) => t.status === "doing")
-  const doneTasks = tasks.filter((t) => t.status === "done")
+  // DnD Logic
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8,
+      }
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    }),
+  )
+
+  const tasksByStatus = useMemo(() => {
+    return {
+      todo: tasks.filter(t => t.status === 'todo'),
+      doing: tasks.filter(t => t.status === 'doing'),
+      done: tasks.filter(t => t.status === 'done'),
+    }
+  }, [tasks])
+
+  function findContainer(id: string) {
+    if (id in tasksByStatus) return id as keyof typeof tasksByStatus
+
+    const task = tasks.find(t => t.id === id)
+    return task?.status as keyof typeof tasksByStatus
+  }
+
+  const handleDragStart = (event: DragStartEvent) => {
+    setActiveId(event.active.id as string)
+  }
+
+  const handleDragOver = (event: DragOverEvent) => {
+    const { active, over } = event
+    if (!over) return
+
+    const activeId = active.id as string
+    const overId = over.id as string
+
+    // Find the containers
+    const activeContainer = findContainer(activeId)
+    const overContainer = findContainer(overId) || (over.data.current?.type === 'Column' ? over.id : null)
+
+    if (!activeContainer || !overContainer || activeContainer === overContainer) {
+      return
+    }
+
+    // Moving between columns
+    // We update the local state immediately for visual feedback
+    setTasks((prev) => {
+      const activeTaskIndex = prev.findIndex(t => t.id === activeId)
+      if (activeTaskIndex === -1) return prev
+
+      const newTasks = [...prev]
+      newTasks[activeTaskIndex] = {
+        ...newTasks[activeTaskIndex],
+        status: overContainer as "todo" | "doing" | "done"
+      }
+      return newTasks
+    })
+  }
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event
+    const activeId = active.id as string
+    const overId = over?.id as string
+
+    const activeContainer = findContainer(activeId)
+    const overContainer = findContainer(overId) || (over?.data.current?.type === 'Column' ? over?.id : null)
+
+    if (activeContainer && overContainer && activeContainer !== overContainer) {
+      // Final status update (already optimistically updated in dragOver, but good to ensure)
+      updateTaskStatus(activeId, overContainer as "todo" | "doing" | "done")
+    }
+
+    setActiveId(null)
+  }
+
+  const activeTask = useMemo(() => tasks.find(t => t.id === activeId), [activeId, tasks])
+
+  const todoTasks = tasksByStatus.todo
+  const doingTasks = tasksByStatus.doing
+  const doneTasks = tasksByStatus.done
   const myTasks = tasks.filter((t) => t.assigned_to === userId && t.status !== "done")
 
   if (isLoading) {
@@ -138,30 +234,43 @@ export default function TasksPage() {
           </CardContent>
         </Card>
       ) : view === "board" ? (
-        /* Kanban Board View */
-        <div className="grid md:grid-cols-3 gap-4">
-          <TaskColumn
-            title="To Do"
-            count={todoTasks.length}
-            tasks={todoTasks}
-            onStatusChange={updateTaskStatus}
-            status="todo"
-          />
-          <TaskColumn
-            title="In Progress"
-            count={doingTasks.length}
-            tasks={doingTasks}
-            onStatusChange={updateTaskStatus}
-            status="doing"
-          />
-          <TaskColumn
-            title="Done"
-            count={doneTasks.length}
-            tasks={doneTasks}
-            onStatusChange={updateTaskStatus}
-            status="done"
-          />
-        </div>
+        /* Kanban Board View with DnD */
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCorners}
+          onDragStart={handleDragStart}
+          onDragOver={handleDragOver}
+          onDragEnd={handleDragEnd}
+        >
+          <div className="grid md:grid-cols-3 gap-4">
+            <TaskColumn
+              title="To Do"
+              count={todoTasks.length}
+              tasks={todoTasks}
+              status="todo"
+              id="todo"
+            />
+            <TaskColumn
+              title="In Progress"
+              count={doingTasks.length}
+              tasks={doingTasks}
+              status="doing"
+              id="doing"
+            />
+            <TaskColumn
+              title="Done"
+              count={doneTasks.length}
+              tasks={doneTasks}
+              status="done"
+              id="done"
+            />
+          </div>
+          <DragOverlay>
+            {activeId && activeTask ? (
+              <TaskCard task={activeTask} />
+            ) : null}
+          </DragOverlay>
+        </DndContext>
       ) : (
         /* List View */
         <Tabs defaultValue="all">
@@ -191,14 +300,14 @@ function TaskColumn({
   title,
   count,
   tasks,
-  onStatusChange,
   status,
+  id,
 }: {
   title: string
   count: number
   tasks: TaskWithAssignee[]
-  onStatusChange: (id: string, status: "todo" | "doing" | "done") => void
   status: "todo" | "doing" | "done"
+  id: string
 }) {
   const bgColors = {
     todo: "bg-muted/30",
@@ -207,74 +316,131 @@ function TaskColumn({
   }
 
   return (
-    <div className={cn("rounded-xl p-4", bgColors[status])}>
+    <div className={cn("rounded-xl p-4 flex flex-col h-full", bgColors[status])}>
       <div className="flex items-center justify-between mb-4">
         <h3 className="font-semibold text-foreground">{title}</h3>
         <Badge variant="secondary">{count}</Badge>
       </div>
-      <div className="space-y-3">
-        {tasks.map((task) => (
-          <TaskCard key={task.id} task={task} onStatusChange={onStatusChange} />
-        ))}
-        {tasks.length === 0 && <div className="text-center py-8 text-sm text-muted-foreground">No tasks</div>}
-      </div>
+      <SortableContext items={tasks.map(t => t.id)} strategy={rectSortingStrategy}>
+        <div className="space-y-3 flex-1">
+          {tasks.map((task) => (
+            <SortableTaskCard key={task.id} task={task} />
+          ))}
+          {tasks.length === 0 && (
+            <div className="text-center py-8 text-sm text-muted-foreground bg-background/20 rounded border border-dashed border-border/50">
+              Drop tasks here
+            </div>
+          )}
+          {/* Invisible placeholder to make the whole column droppable if empty */}
+          {/* Actually SortableContext handles this if we configure it right, but let's be explicitly droppable too if needed, or just rely on the items */}
+          <DroppableZone id={id} />
+        </div>
+      </SortableContext>
     </div>
   )
 }
 
+function DroppableZone({ id }: { id: string }) {
+  const { setNodeRef } = useSortable({
+    id: id,
+    data: {
+      type: 'Column',
+    }
+  })
+
+  return (
+    <div ref={setNodeRef} className="h-2 w-full" />
+  )
+}
+
+function SortableTaskCard({ task }: { task: TaskWithAssignee }) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: task.id, data: { type: 'Task', task } })
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  }
+
+  return (
+    <div ref={setNodeRef} style={style} {...attributes} {...listeners}>
+      <TaskCard task={task} />
+    </div>
+  )
+}
+
+
 function TaskCard({
   task,
-  onStatusChange,
+  onStatusChange, // Optional now since we use DnD mostly, but can still keep for fallback/menu
 }: {
   task: TaskWithAssignee
-  onStatusChange: (id: string, status: "todo" | "doing" | "done") => void
+  onStatusChange?: (id: string, status: "todo" | "doing" | "done") => void
 }) {
   const isOverdue = task.deadline && isPast(new Date(task.deadline)) && task.status !== "done"
 
   return (
-    <Card className={cn("cursor-pointer hover:shadow-md transition-shadow", isOverdue && "border-destructive/50")}>
+    <Card className={cn("cursor-grab active:cursor-grabbing hover:shadow-md transition-shadow relative group", isOverdue && "border-destructive/50")}>
       <CardContent className="p-4">
         <div className="flex items-start gap-2 mb-3">
-          <GripVertical className="w-4 h-4 text-muted-foreground/50 mt-0.5 cursor-grab" />
+          <GripVertical className="w-4 h-4 text-muted-foreground/50 mt-0.5" />
           <div className="flex-1 min-w-0">
-            <Link href={`/tasks/${task.id}`}>
-              <h4
-                className={cn(
-                  "font-medium text-sm hover:text-primary transition-colors",
-                  task.status === "done" && "line-through text-muted-foreground",
-                )}
-              >
-                {task.title}
-              </h4>
-            </Link>
+            {/* We stop propagation here so clicking the link doesn't drag */}
+            <div onPointerDown={(e) => e.stopPropagation()}>
+              <Link href={`/tasks/${task.id}`}>
+                <h4
+                  className={cn(
+                    "font-medium text-sm hover:text-primary transition-colors",
+                    task.status === "done" && "line-through text-muted-foreground",
+                  )}
+                >
+                  {task.title}
+                </h4>
+              </Link>
+            </div>
             {task.description && <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{task.description}</p>}
           </div>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon" className="h-6 w-6">
-                <MoreVertical className="w-3 h-3" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem asChild>
-                <Link href={`/tasks/${task.id}`}>View Details</Link>
-              </DropdownMenuItem>
-              <DropdownMenuItem asChild>
-                <Link href={`/tasks/${task.id}/edit`}>Edit</Link>
-              </DropdownMenuItem>
-              {task.status !== "todo" && (
-                <DropdownMenuItem onClick={() => onStatusChange(task.id, "todo")}>Move to To Do</DropdownMenuItem>
-              )}
-              {task.status !== "doing" && (
-                <DropdownMenuItem onClick={() => onStatusChange(task.id, "doing")}>
-                  Move to In Progress
+          {/* Menu button also needs stopPropagation */}
+          <div onPointerDown={(e) => e.stopPropagation()}>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon" className="h-6 w-6">
+                  <MoreVertical className="w-3 h-3" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem asChild>
+                  <Link href={`/tasks/${task.id}`}>View Details</Link>
                 </DropdownMenuItem>
-              )}
-              {task.status !== "done" && (
-                <DropdownMenuItem onClick={() => onStatusChange(task.id, "done")}>Mark as Done</DropdownMenuItem>
-              )}
-            </DropdownMenuContent>
-          </DropdownMenu>
+                <DropdownMenuItem asChild>
+                  <Link href={`/tasks/${task.id}/edit`}>Edit</Link>
+                </DropdownMenuItem>
+                {onStatusChange && (
+                  <>
+                    {task.status !== "todo" && (
+                      <DropdownMenuItem onClick={() => onStatusChange(task.id, "todo")}>Move to To Do</DropdownMenuItem>
+                    )}
+                    {task.status !== "doing" && (
+                      <DropdownMenuItem onClick={() => onStatusChange(task.id, "doing")}>
+                        Move to In Progress
+                      </DropdownMenuItem>
+                    )}
+                    {task.status !== "done" && (
+                      <DropdownMenuItem onClick={() => onStatusChange(task.id, "done")}>Mark as Done</DropdownMenuItem>
+                    )}
+                  </>
+                )}
+
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
         </div>
 
         <div className="flex items-center justify-between">

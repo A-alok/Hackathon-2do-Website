@@ -1,0 +1,3 @@
+ALTER TABLE hackathons 
+ADD COLUMN IF NOT EXISTS checklist JSONB DEFAULT '[]'::jsonb,
+ADD COLUMN IF NOT EXISTS links JSONB DEFAULT '[]'::jsonb;

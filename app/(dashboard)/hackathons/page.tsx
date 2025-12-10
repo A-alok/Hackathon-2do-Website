@@ -135,28 +135,40 @@ function HackathonCard({ hackathon, isPast = false }: { hackathon: Hackathon; is
       <CardHeader className="pb-3">
         <div className="flex items-start justify-between gap-2">
           <div className="flex-1 min-w-0">
-            <CardTitle className="text-base truncate">{hackathon.title}</CardTitle>
+            <Link href={`/hackathons/${hackathon.id}`} className="hover:underline">
+              <CardTitle className="text-base truncate">{hackathon.title}</CardTitle>
+            </Link>
             {hackathon.organizer && <CardDescription className="truncate">{hackathon.organizer}</CardDescription>}
           </div>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon" className="h-8 w-8">
-                <MoreVertical className="w-4 h-4" />
+          <div className="flex items-center gap-2">
+            <Link href={`/hackathons/${hackathon.id}`}>
+              <Button size="sm" variant="secondary" className="h-8">
+                Open
               </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem asChild>
-                <Link href={`/hackathons/${hackathon.id}/edit`}>Edit</Link>
-              </DropdownMenuItem>
-              {hackathon.link && (
+            </Link>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon" className="h-8 w-8">
+                  <MoreVertical className="w-4 h-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
                 <DropdownMenuItem asChild>
-                  <Link href={hackathon.link} target="_blank">
-                    Visit Website
-                  </Link>
+                  <Link href={`/hackathons/${hackathon.id}`}>Open Command Center</Link>
                 </DropdownMenuItem>
-              )}
-            </DropdownMenuContent>
-          </DropdownMenu>
+                <DropdownMenuItem asChild>
+                  <Link href={`/hackathons/${hackathon.id}/edit`}>Edit Details</Link>
+                </DropdownMenuItem>
+                {hackathon.link && (
+                  <DropdownMenuItem asChild>
+                    <Link href={hackathon.link} target="_blank">
+                      Visit Website
+                    </Link>
+                  </DropdownMenuItem>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
         </div>
       </CardHeader>
       <CardContent className="space-y-3">

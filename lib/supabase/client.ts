@@ -12,12 +12,16 @@ export function createClient() {
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
       {
-        auth: {
-          storage: window.localStorage,
-          storageKey: "supabase.auth.token",
-          autoRefreshToken: true,
-          persistSession: true,
-          detectSessionInUrl: false,
+        cookies: {
+          get(name: string) {
+            return window.localStorage.getItem(name) ?? undefined
+          },
+          set(name: string, value: string, options: any) {
+            window.localStorage.setItem(name, value)
+          },
+          remove(name: string, options: any) {
+            window.localStorage.removeItem(name)
+          },
         },
       },
     )
